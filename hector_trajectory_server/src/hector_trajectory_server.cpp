@@ -44,6 +44,7 @@
 #include <tf/tf.h>
 
 #include <algorithm>
+#include <boost/circular_buffer.hpp>
 
 using namespace std;
 
@@ -64,6 +65,10 @@ public:
     private_nh.param("source_frame_name", p_source_frame_name_, std::string("base_link"));
     private_nh.param("trajectory_update_rate", p_trajectory_update_rate_, 4.0);
     private_nh.param("trajectory_publish_rate", p_trajectory_publish_rate_, 0.25);
+
+    int maxSize;
+    private_nh.param("max_poses", maxSize, 100);
+    poses_.set_capacity(maxSize);
 
     waitForTf();
 
@@ -117,6 +122,7 @@ public:
     {
       last_reset_time_ = ros::Time::now();
       trajectory_.trajectory.poses.clear();
+      poses_.clear();
       trajectory_.trajectory.header.stamp = ros::Time::now();
     }
   }
@@ -129,13 +135,17 @@ public:
 
     tf_.transformPose(p_target_frame_name_, pose_source_, pose_out);
 
-    if (trajectory_.trajectory.poses.size() != 0){
+    if ( poses_.full() ) {
+      poses_.pop_front();
+    }
+    
+    if (poses_.size() != 0){
       //Only add pose to trajectory if it's not already stored
-      if (pose_out.header.stamp != trajectory_.trajectory.poses.back().header.stamp){
-        trajectory_.trajectory.poses.push_back(pose_out);
+      if (pose_out.header.stamp != poses_.back().header.stamp){
+        poses_.push_back(pose_out);
       }
     }else{
-      trajectory_.trajectory.poses.push_back(pose_out);
+      poses_.push_back(pose_out);
     }
 
     trajectory_.trajectory.header.stamp = pose_out.header.stamp;
@@ -154,6 +164,13 @@ public:
 
   void publishTrajectoryTimerCallback(const ros::TimerEvent& event)
   {
+    trajectory_.trajectory.poses.clear();
+    trajectory_.trajectory.poses.reserve(poses_.size());
+    for ( boost::circular_buffer<geometry_msgs::PoseStamped>::iterator iter = poses_.begin();
+	  iter != poses_.end(); ++iter ) {
+      trajectory_.trajectory.poses.push_back(*iter);
+    }
+
     trajectory_pub_.publish(trajectory_.trajectory);
   }
 
@@ -165,7 +182,7 @@ public:
   }
 
   inline const hector_nav_msgs::GetRobotTrajectoryResponse getTrajectory() const
-  {
+  {    
     return trajectory_;
   }
 
@@ -258,6 +275,7 @@ public:
   ros::Publisher  trajectory_pub_;
 
   hector_nav_msgs::GetRobotTrajectory::Response trajectory_;
+  boost::circular_buffer<geometry_msgs::PoseStamped> poses_;
 
   tf::TransformListener tf_;
 
